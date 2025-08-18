@@ -154,6 +154,9 @@ class TeaHousePlugin(Star):
         # 管理员配置文件路径
         self.admin_config_path = os.path.join(self.PLUGIN_DIR, "admins.json")
         self.admins = self._load_admins()
+        # 评级配置文件路径
+        self.rating_config_path = os.path.join(self.PLUGIN_DIR, "rating_config.json")
+        self.rating_config = self._load_rating_config()
         
     def _load_admins(self):
         """加载管理员配置"""
@@ -178,6 +181,43 @@ class TeaHousePlugin(Star):
                 json.dump({"admins": admins}, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"保存管理员配置失败: {e}")
+    
+    def _load_rating_config(self):
+        """加载评级配置"""
+        if os.path.exists(self.rating_config_path):
+            try:
+                with open(self.rating_config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"加载评级配置失败: {e}")
+                return self._get_default_rating_config()
+        else:
+            # 创建默认配置文件
+            default_config = self._get_default_rating_config()
+            self._save_rating_config(default_config)
+            return default_config
+    
+    def _save_rating_config(self, config):
+        """保存评级配置"""
+        try:
+            with open(self.rating_config_path, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存评级配置失败: {e}")
+    
+    def _get_default_rating_config(self):
+        """获取默认评级配置"""
+        return {
+            "ratings": [
+                {"name": "青茶学徒", "min_varieties": 1, "max_varieties": 3, "description": "刚刚踏入茶道之门，还需努力学习~"},
+                {"name": "绿茶行者", "min_varieties": 4, "max_varieties": 6, "description": "对绿茶颇有研究，继续加油！"},
+                {"name": "乌龙使者", "min_varieties": 7, "max_varieties": 9, "description": "精通多种乌龙茶，技艺渐进！"},
+                {"name": "红茶大师", "min_varieties": 10, "max_varieties": 12, "description": "红茶造诣颇深，令人敬佩！"},
+                {"name": "普洱宗师", "min_varieties": 13, "max_varieties": 999, "description": "茶道宗师，收藏丰富，令人仰慕！"}
+            ],
+            "next_rating_text": "下一等级",
+            "max_rating_text": "恭喜您达到最高等级！"
+        }
     
     def is_admin(self, user_id):
         """检查用户是否为管理员"""
@@ -243,6 +283,7 @@ class TeaHousePlugin(Star):
         menu += "  雪泷上架 <名称> <库存> <类型> <价格> <描述> - 上架新茶叶\n"
         menu += "  雪泷下架 <商品ID> - 下架茶叶商品\n"
         menu += "  雪泷补货 <商品ID> <数量> - 为茶叶商品补货\n"
+        menu += "  雪泷配置评级 - 查看和配置茶叶评级标准\n"
         menu += "📖 其他：\n"
         menu += "  雪泷茶馆帮助 - 显示此帮助菜单\n"
         
@@ -267,6 +308,7 @@ class TeaHousePlugin(Star):
         """
         if not self.database_plugin_activated:
             yield event.plain_result("数据库插件未加载，茶艺展示功能无法使用。\n请先安装并启用 astrbot_plugin_furry_cgsjk。\n插件仓库地址：https://github.com/furryHM-mrz/astrbot_plugin_furry_cgsjk")
+
             return
             
         user_id = event.get_sender_id()
@@ -568,13 +610,18 @@ class TeaHousePlugin(Star):
                     yield event.plain_result(f"任务 '{task_display_name}' 尚未完成，无法领取奖励。\n当前进度: {task_progress}/{task_target}")
                     return
                 
+                # 检查任务奖励是否已经领取过
+                if status == '已领取':
+                    yield event.plain_result("你已经领取过了")
+                    return
+                
                 # 发放奖励
                 db_economy.add_economy(reward)
                 
                 # 更新任务状态为已领取
                 claimed = db_task.claim_reward(task_id)
                 if not claimed:
-                    yield event.plain_result(f"任务 '{task_display_name}' 的奖励已经领取过或任务未完成。")
+                    yield event.plain_result("你已经领取过了")
                     return
                 
                 yield event.plain_result(f"🎉 恭喜 {user_name}！\n任务 '{task_display_name}' 的奖励已发放。\n获得 {reward} 金币。")
