@@ -680,7 +680,8 @@ class TeaHousePlugin(Star):
         user_id = event.get_sender_id()
         try:
             with self.open_databases(self.database_plugin_config, self.DATABASE_FILE, user_id) as (db_user, db_economy, _, db_backpack, db_store):
-                teas = db_store.get_all_tea_store()
+                # 使用新的连续ID方法
+                teas = db_store.get_all_tea_store_with_continuous_id()
                 if not teas:
                     yield event.plain_result("商店暂无商品。")
                     return
@@ -696,9 +697,11 @@ class TeaHousePlugin(Star):
                 for tea in teas:
                     # id, tea_name, quantity, tea_type, price, description
                     tea_id, tea_name, quantity, tea_type, price, description = tea
-                    id_mapping[display_id] = tea_id
+                    # 获取实际ID用于映射
+                    actual_tea_id = db_store.get_actual_id_by_continuous_id(tea_id)
+                    id_mapping[tea_id] = actual_tea_id
                     
-                    shop_info += f"ID: {display_id}\n"
+                    shop_info += f"ID: {tea_id}\n"
                     shop_info += f"茶叶名称: {tea_name}\n"
                     shop_info += f"类型: {tea_type}\n"
                     shop_info += f"价格: {price} 金币\n"
@@ -708,7 +711,7 @@ class TeaHousePlugin(Star):
                     
                     display_id += 1
                 
-                # 保存ID映射到用户会话中（简化处理，实际项目中可能需要更好的存储方式）
+                # 保存ID映射到用户会话中
                 self._id_mapping = id_mapping
                 
                 yield event.plain_result(shop_info)
@@ -933,6 +936,37 @@ class TeaHousePlugin(Star):
             
         logger.info(f"解析后的参数: {params}")
         
+        # 检查参数是否为空或数量不足
+        if not args or len(args) < 1:
+            # 先显示商店信息，帮助用户了解有哪些商品可以购买
+            try:
+                user_id = event.get_sender_id()
+                with self.open_databases(self.database_plugin_config, self.DATABASE_FILE, user_id) as (db_user, db_economy, db_task, db_backpack, db_store):
+                    teas = db_store.get_all_tea_store()
+                    if teas:
+                        shop_info = "----- 可购买的茶叶商品 -----\n"
+                        shop_info += "使用方法: 雪泷购买 <商品ID> <数量>\n"
+                        shop_info += "例如: 雪泷购买 1 2 (购买ID为1的商品2份)\n\n"
+                        
+                        # 创建ID映射，使用连续序号
+                        id_mapping = {}
+                        display_id = 1
+                        
+                        for tea in teas:
+                            tea_id, tea_name, quantity, tea_type, price, description = tea
+                            id_mapping[display_id] = tea_id
+                            shop_info += f"ID: {display_id} | {tea_name} | 价格: {price}金币 | 库存: {quantity}\n"
+                            display_id += 1
+                            
+                        shop_info += "\n请使用 雪泷购买 <商品ID> <数量> 来购买您喜欢的茶叶"
+                        yield event.plain_result(shop_info)
+                    else:
+                        yield event.plain_result("商店暂无商品，无法购买。")
+            except Exception as e:
+                logger.exception(f"获取商店信息失败: {e}")
+                yield event.plain_result("获取商店信息失败，请稍后再试。")
+            return
+            
         # 检查参数数量
         if len(params) < 2:
             yield event.plain_result("参数不足，请使用 雪泷购买 <商品ID> <数量>")
@@ -959,36 +993,8 @@ class TeaHousePlugin(Star):
                 if hasattr(self, '_id_mapping') and tea_id in self._id_mapping:
                     actual_tea_id = self._id_mapping[tea_id]
                 
-                # 获取商品信息
-                tea_item = db_store.get_tea_store_item(actual_tea_id)
-                if not tea_item:
-                    # 如果商品不存在，显示商店信息帮助用户选择正确的商品
-                    try:
-                        teas = db_store.get_all_tea_store()
-                        if teas:
-                            shop_info = "未找到该商品，请检查商品ID是否正确。\n----- 当前商店商品 -----\n"
-                            
-                            # 创建ID映射，使用连续序号
-                            id_mapping = {}
-                            display_id = 1
-                            
-                            for tea in teas:
-                                tea_id, tea_name, quantity, tea_type, price, description = tea
-                                id_mapping[display_id] = tea_id
-                                shop_info += f"ID: {display_id}\n"
-                                shop_info += f"茶叶名称: {tea_name}\n"
-                                shop_info += f"价格: {price}金币\n"
-                                shop_info += f"库存: {quantity}\n"
-                                shop_info += "----------\n"
-                                display_id += 1
-                                
-                            yield event.plain_result(shop_info)
-                        else:
-                            yield event.plain_result("未找到该商品，且商店暂无其他商品。")
-                    except Exception as e:
-                        logger.exception(f"获取商店信息失败: {e}")
-                        yield event.plain_result("未找到该商品，请检查商品ID是否正确。")
-                    return
+                # 使用新的方法通过连续ID获取实际ID
+                actual_tea_id = db_store.get_actual_id_by_continuous_id(tea_id)
                     
                 tea_id, tea_name, stock_quantity, tea_type, price, description = tea_item
                 
@@ -1013,7 +1019,7 @@ class TeaHousePlugin(Star):
                 db_backpack.add_item(tea_name, quantity, tea_type, price)
                 
                 # 更新库存
-                db_store.update_tea_quantity(tea_id, -quantity)
+                db_store.update_tea_quantity(actual_tea_id, -quantity)
                 
                 # 更新任务进度（如果有的话）
                 self._update_task_progress(db_task, "daily_buy_tea", 1)
@@ -1183,33 +1189,93 @@ class TeaHousePlugin(Star):
             
         user_id = event.get_sender_id()
         
-        if len(args) < 1:
+        # 检查是否为管理员（使用配置文件方式）
+        if not self.is_admin(user_id):
+            yield event.plain_result("权限不足，只有管理员才能下架商品")
+            return
+
+        # 添加调试信息
+        logger.info(f"下架命令接收到参数: {args}, 参数数量: {len(args)}")
+        
+        # 检查参数是否为空或数量不足
+        if not args or len(args) < 1:
             yield event.plain_result("参数不足，请使用 雪泷下架 <商品ID>")
             return
             
+        # 修复参数解析问题，从原始消息中提取参数
+        raw_message = event.message_obj.message
+        if isinstance(raw_message, list) and len(raw_message) > 0:
+            # 如果是消息段列表，提取文本内容
+            plain_texts = [seg.text for seg in raw_message if hasattr(seg, 'type') and seg.type == 'Plain']
+            full_text = ''.join(plain_texts)
+        else:
+            full_text = str(raw_message)
+        
+        # 从完整消息中提取参数（去掉命令前缀）
+        prefix = "雪泷下架"
+        if full_text.startswith(prefix):
+            params = full_text[len(prefix):].strip().split()
+        elif full_text.startswith("下架"):
+            params = full_text[2:].strip().split()
+        else:
+            # 如果无法从完整消息中提取，则使用原来的参数作为备选
+            params = list(args)
+            
+        logger.info(f"解析后的参数: {params}")
+        
+        # 检查参数数量
+        if len(params) < 1:
+            yield event.plain_result("参数不足，请使用 雪泷下架 <商品ID>")
+            return
+            
+        tea_id_str = params[0]
+        
         try:
-            tea_id = int(args[0])
+            tea_id = int(tea_id_str)
         except ValueError:
             yield event.plain_result("参数错误，商品ID必须是数字")
             return
-        
-        # 检查是否为管理员
+
         try:
             with self.open_databases(self.database_plugin_config, self.DATABASE_FILE, user_id) as (db_user, db_economy, _, db_backpack, db_store):
-                if not db_store.is_admin(user_id):
-                    yield event.plain_result("权限不足，只有管理员才能下架商品")
-                    return
-                    
-                # 检查商品是否存在
-                tea_item = db_store.get_tea_store_item(tea_id)
-                if not tea_item:
-                    yield event.plain_result("未找到该商品，请检查商品ID是否正确")
-                    return
-                    
-                # 下架商品
-                db_store.remove_tea_from_store(tea_id)
+                # 使用新的方法通过连续ID获取实际ID
+                actual_tea_id = db_store.get_actual_id_by_continuous_id(tea_id)
                 
-                yield event.plain_result(f"下架成功！\n已从商店下架商品: {tea_item[1]}")
+                if not actual_tea_id:
+                    # 如果商品不存在，显示商店信息帮助用户选择正确的商品
+                    try:
+                        # 使用新的连续ID方法
+                        teas = db_store.get_all_tea_store_with_continuous_id()
+                        if teas:
+                            tea_list = "当前商店中的商品列表：\n"
+                            # 创建ID映射，使用连续序号
+                            id_mapping = {}
+                            
+                            for tea in teas:
+                                tea_id, tea_name, quantity, tea_type, price, description = tea
+                                # 获取实际ID用于映射
+                                actual_tea_id = db_store.get_actual_id_by_continuous_id(tea_id)
+                                id_mapping[tea_id] = actual_tea_id
+                                tea_list += f"ID: {tea_id} | {tea_name} | 库存: {quantity}\n"
+                                
+                            # 保存ID映射到用户会话中
+                            self._id_mapping = id_mapping
+                                
+                            yield event.plain_result(f"未找到该商品，请检查商品ID是否正确\n{tea_list}")
+                        else:
+                            yield event.plain_result("未找到该商品，且商店中暂无其他商品")
+                    except Exception as e:
+                        logger.exception(f"获取商店信息失败: {e}")
+                        yield event.plain_result("未找到该商品，请检查商品ID是否正确。")
+                    return
+                
+                # 获取商品信息
+                tea_item = db_store.get_tea_store_item(actual_tea_id)
+                # 执行下架操作
+                db_store.remove_tea_from_store(actual_tea_id)
+                
+                yield event.plain_result(f"下架成功！\n"
+                                       f"商品: {tea_item[1]}")
                 
         except Exception as e:
             logger.exception(f"下架失败: {e}")
@@ -1236,14 +1302,45 @@ class TeaHousePlugin(Star):
             yield event.plain_result("权限不足，只有管理员才能为商品补货")
             return
 
-        # 检查参数
-        if len(args) < 2:
+        # 添加调试信息
+        logger.info(f"补货命令接收到参数: {args}, 参数数量: {len(args)}")
+        
+        # 检查参数是否为空或数量不足
+        if not args or len(args) < 1:
             yield event.plain_result("参数不足，请使用 雪泷补货 <商品ID> <补货数量>")
             return
             
+        # 修复参数解析问题，从原始消息中提取参数
+        raw_message = event.message_obj.message
+        if isinstance(raw_message, list) and len(raw_message) > 0:
+            # 如果是消息段列表，提取文本内容
+            plain_texts = [seg.text for seg in raw_message if hasattr(seg, 'type') and seg.type == 'Plain']
+            full_text = ''.join(plain_texts)
+        else:
+            full_text = str(raw_message)
+        
+        # 从完整消息中提取参数（去掉命令前缀）
+        prefix = "雪泷补货"
+        if full_text.startswith(prefix):
+            params = full_text[len(prefix):].strip().split()
+        elif full_text.startswith("补货"):
+            params = full_text[2:].strip().split()
+        else:
+            # 如果无法从完整消息中提取，则使用原来的参数作为备选
+            params = list(args)
+            
+        logger.info(f"解析后的参数: {params}")
+        
+        # 检查参数数量
+        if len(params) < 2:
+            yield event.plain_result("参数不足，请使用 雪泷补货 <商品ID> <补货数量>")
+            return
+            
+        tea_id_str, quantity_str = params[0], params[1]
+        
         try:
-            tea_id = int(args[0])
-            quantity = int(args[1])
+            tea_id = int(tea_id_str)
+            quantity = int(quantity_str)
         except ValueError:
             yield event.plain_result("参数错误，商品ID和补货数量必须是数字")
             return
@@ -1254,22 +1351,44 @@ class TeaHousePlugin(Star):
 
         try:
             with self.open_databases(self.database_plugin_config, self.DATABASE_FILE, user_id) as (db_user, db_economy, _, db_backpack, db_store):
-                # 检查商品是否存在
-                tea_item = db_store.get_tea_store_item(tea_id)
-                if not tea_item:
-                    # 获取商店所有商品列表，帮助管理员选择正确的商品ID
-                    all_teas = db_store.get_all_tea_store()
-                    if all_teas:
-                        tea_list = "当前商店中的商品列表：\n"
-                        for tea in all_teas:
-                            tea_list += f"ID: {tea[0]} | {tea[1]} | 库存: {tea[2]}\n"
-                        yield event.plain_result(f"未找到该商品，请检查商品ID是否正确\n{tea_list}")
-                    else:
-                        yield event.plain_result("未找到该商品，且商店中暂无其他商品")
+                # 检查ID映射
+                actual_tea_id = tea_id
+                if hasattr(self, '_id_mapping') and tea_id in self._id_mapping:
+                    actual_tea_id = self._id_mapping[tea_id]
+                
+                # 使用新的方法通过连续ID获取实际ID
+                actual_tea_id = db_store.get_actual_id_by_continuous_id(tea_id)
+                
+                if not actual_tea_id:
+                    # 如果商品不存在，显示商店信息帮助用户选择正确的商品
+                    try:
+                        # 使用新的连续ID方法
+                        teas = db_store.get_all_tea_store_with_continuous_id()
+                        if teas:
+                            tea_list = "当前商店中的商品列表：\n"
+                            # 创建ID映射，使用连续序号
+                            id_mapping = {}
+                            
+                            for tea in teas:
+                                tea_id, tea_name, quantity, tea_type, price, description = tea
+                                # 获取实际ID用于映射
+                                actual_tea_id = db_store.get_actual_id_by_continuous_id(tea_id)
+                                id_mapping[tea_id] = actual_tea_id
+                                tea_list += f"ID: {tea_id} | {tea_name} | 库存: {quantity}\n"
+                                
+                            # 保存ID映射到用户会话中
+                            self._id_mapping = id_mapping
+                                
+                            yield event.plain_result(f"未找到该商品，请检查商品ID是否正确\n{tea_list}")
+                        else:
+                            yield event.plain_result("未找到该商品，且商店中暂无其他商品")
+                    except Exception as e:
+                        logger.exception(f"获取商店信息失败: {e}")
+                        yield event.plain_result("未找到该商品，请检查商品ID是否正确。")
                     return
                 
                 # 执行补货操作
-                updated_tea = db_store.restock_tea(tea_id, quantity)
+                updated_tea = db_store.restock_tea(actual_tea_id, quantity)
                 
                 yield event.plain_result(f"补货成功！\n"
                                        f"商品: {updated_tea[1]}\n"
