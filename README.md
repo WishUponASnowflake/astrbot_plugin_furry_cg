@@ -144,3 +144,6 @@
 
 ### 命令无响应
 请检查 AstrBot 日志，确认插件是否正常加载，以及是否有相关错误信息。
+
+本插件签到部分采用[saris_economic](https://github.com/chengcheng0325/astrbot_plugin_saris_economic)插件的
+
