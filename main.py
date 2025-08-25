@@ -146,7 +146,7 @@ async def download_image(user_id, PP_PATH, max_retries=3):
     return False  # 下载失败，返回 False
 
 
-@register("furryhm", "astrbot_plugin_furry_cg", "小茶馆插件", "1.0.0")
+@register("furryhm", "astrbot_plugin_furry_cg", "小茶馆插件", "1.0.1")
 class TeaHousePlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
