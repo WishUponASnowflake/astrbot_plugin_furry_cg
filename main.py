@@ -4,17 +4,31 @@ from astrbot.api import logger
 from astrbot.api.all import *
 import astrbot.api.message_components as Comp
 
-# 使用相对导入方式导入API模块
-from .API.SignIn import create_check_in_card
-from .API.virtual_time import VirtualClock
+import sys
+import os
+# 将当前目录添加到sys.path中，以便可以导入API模块
+sys.path.append(os.path.dirname(__file__))
+
+# 使用绝对导入方式导入API模块
+from API.SignIn import create_check_in_card
+from API.virtual_time import VirtualClock
+
+
+
+from API.virtual_time import VirtualClock
+
 
 import os
 import datetime
-import requests
+import aiohttp
+import asyncio
 import json
 import time
 import random
 import re
+from typing import Optional, Dict, Any
+
+
 
 # Jinja2 template that supports CSS
 TMPL = '''
@@ -74,7 +88,7 @@ def get_formatted_time():
     return now.strftime(f"%Y-%m-%d %H:%M:%S {weekday_name}")
 
 
-def get_one_sentence():
+async def get_one_sentence() -> Optional[Dict[Any, Any]]:
     """
     从 https://api.tangdouz.com/a/one.php?return=json 获取一句一言。
     进行错误处理和重试机制，保证服务的稳定性。
@@ -83,14 +97,15 @@ def get_one_sentence():
     url = "https://api.tangdouz.com/a/one.php?return=json"
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, timeout=5)  # 添加超时时间
-            response.raise_for_status()  # 检查 HTTP 状态码
-            data = response.json()
-            return data
-        except requests.exceptions.RequestException as e:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                    response.raise_for_status()  # 检查 HTTP 状态码
+                    data = await response.json()
+                    return data
+        except aiohttp.ClientError as e:
             logger.warning(f"请求 one_sentence 失败 (尝试 {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
-                time.sleep(2 * (attempt + 1))  # 增加重试间隔
+                await asyncio.sleep(2 * (attempt + 1))  # 增加重试间隔
             else:
                 logger.error(f"获取 one_sentence 失败: {e}")
                 return None
@@ -100,7 +115,7 @@ def get_one_sentence():
     return None
 
 
-def download_image(user_id, PP_PATH, max_retries=3):
+async def download_image(user_id, PP_PATH, max_retries=3):
     """
     从给定的 URL 下载图像，并将其保存到指定路径。
     Args:
@@ -114,17 +129,18 @@ def download_image(user_id, PP_PATH, max_retries=3):
     filepath = os.path.join(PP_PATH, f"{user_id}.png")
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, stream=True, timeout=10)  # 添加超时时间
-            response.raise_for_status()  # 检查响应状态码，如果不是 200，抛出异常
-            with open(filepath, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):  # 以流式方式写入文件
-                    f.write(chunk)
-            logger.info(f"用户 {user_id} 的图像下载成功，已保存到 {filepath}")
-            return True  # 下载成功，返回 True
-        except requests.exceptions.RequestException as e:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    response.raise_for_status()  # 检查响应状态码，如果不是 200，抛出异常
+                    with open(filepath, "wb") as f:
+                        async for chunk in response.content.iter_chunked(8192):  # 以流式方式写入文件
+                            f.write(chunk)
+                    logger.info(f"用户 {user_id} 的图像下载成功，已保存到 {filepath}")
+                    return True  # 下载成功，返回 True
+        except aiohttp.ClientError as e:
             logger.warning(f"用户 {user_id} 的图像下载失败 (尝试 {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
-                time.sleep(2)  # 等待 2 秒后重试
+                await asyncio.sleep(2)  # 等待 2 秒后重试
             else:
                 logger.error(f"用户 {user_id} 下载失败，达到最大重试次数。")
     return False  # 下载失败，返回 False
@@ -873,6 +889,7 @@ class TeaHousePlugin(Star):
         else:
             # 如果无法从完整消息中提取，则使用原来的参数拼接方式作为备选
             tea_name = ' '.join(args).strip()
+        logger.info(f"解析后的茶叶名称: '{tea_name}'")
             
         logger.info(f"解析后的茶叶名称: '{tea_name}'")
         
@@ -1041,7 +1058,9 @@ class TeaHousePlugin(Star):
                 
                 # 使用新的方法通过连续ID获取实际ID
                 actual_tea_id = db_store.get_actual_id_by_continuous_id(tea_id)
-                    
+                
+                # 获取商品信息
+                tea_item = db_store.get_tea_store_item(actual_tea_id)
                 tea_id, tea_name, stock_quantity, tea_type, price, description = tea_item
                 
                 # 检查库存
@@ -1091,6 +1110,56 @@ class TeaHousePlugin(Star):
             return
             
         user_id = event.get_sender_id()
+        try:
+            with self.open_databases(self.database_plugin_config, self.DATABASE_FILE, user_id) as (db_user, db_economy, db_task, db_backpack, db_store):
+                # 检查ID映射
+                actual_tea_id = tea_id
+                if hasattr(self, '_id_mapping') and tea_id in self._id_mapping:
+                    actual_tea_id = self._id_mapping[tea_id]
+                
+                # 使用新的方法通过连续ID获取实际ID
+                actual_tea_id = db_store.get_actual_id_by_continuous_id(tea_id)
+                
+                # 获取商品信息
+                tea_item = db_store.get_tea_store_item(actual_tea_id)
+                tea_id, tea_name, stock_quantity, tea_type, price, description = tea_item
+                
+                # 检查库存
+                if stock_quantity < quantity:
+                    yield event.plain_result(f"库存不足，当前库存仅有 {stock_quantity} 份")
+                    return
+                    
+                # 计算总价
+                total_price = price * quantity
+                
+                # 检查用户余额
+                user_balance = db_economy.get_economy()
+                if user_balance < total_price:
+                    yield event.plain_result(f"余额不足，需要 {total_price} 金币，您当前有 {user_balance} 金币")
+                    return
+                    
+                # 扣除金币
+                db_economy.reduce_economy(total_price)
+                
+                # 添加到背包
+                db_backpack.add_item(tea_name, quantity, tea_type, price)
+                
+                # 更新库存
+                db_store.update_tea_quantity(actual_tea_id, -quantity)
+                
+                # 更新任务进度（如果有的话）
+                self._update_task_progress(db_task, "daily_buy_tea", 1)
+                
+                yield event.plain_result(f"购买成功！\n购买了 {quantity} 份 {tea_name}\n花费 {total_price} 金币\n茶叶已放入您的背包")
+                
+        except Exception as e:
+            logger.exception(f"购买失败: {e}")
+            yield event.plain_result("购买失败，请稍后再试。")
+        finally:
+            # 确保数据库连接关闭
+            if self.database_plugin_activated and hasattr(self.database_plugin, 'close_databases'):
+                self.database_plugin.close_databases()
+
         
         # 检查是否为管理员（使用配置文件方式）
         if not self.is_admin(user_id):
