@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.0.0] - 2025-08-25
+## [1.0.1] - 2025-08-25
 
 ### 添加
 - 实现完整的签到系统，包括每日签到获取金币奖励和签到卡片生成
