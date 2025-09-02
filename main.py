@@ -146,8 +146,15 @@ async def download_image(user_id, PP_PATH, max_retries=3):
     return False  # 下载失败，返回 False
 
 
-@register("furryhm", "astrbot_plugin_furry_cg", "小茶馆插件", "1.0.1")
+# @register("furryhm", "astrbot_plugin_furry_cg", "小茶馆插件", "1.0.1")
 class TeaHousePlugin(Star):
+    # 插件元数据
+    namespace = "furryhm"
+    plugin_name = "astrbot_plugin_furry_cg"
+    description = "小茶馆插件"
+    version = "1.0.1"
+    repo = "https://github.com/furryHM-mrz/astrbot_plugin_furry_cg"  # 添加仓库地址以便自动更新
+    
     def __init__(self, context: Context):
         super().__init__(context)
         # 使用框架API获取插件数据目录
