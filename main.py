@@ -100,6 +100,24 @@ async def get_one_sentence() -> Optional[Dict[Any, Any]]:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
                     response.raise_for_status()  # 检查 HTTP 状态码
+                    
+                    # 检查响应的内容类型
+                    content_type = response.headers.get('content-type', '')
+                    if 'application/json' not in content_type:
+                        logger.warning(f"Unexpected content type: {content_type}")
+                        # 尝试从HTML响应中提取JSON数据
+                        text = await response.text()
+                        # 尝试查找JSON数据
+                        import re
+                        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+                        if json_match:
+                            import json
+                            data = json.loads(json_match.group())
+                            return data
+                        else:
+                            logger.error("无法从响应中提取JSON数据")
+                            return None
+                    
                     data = await response.json()
                     return data
         except aiohttp.ClientError as e:
@@ -146,17 +164,17 @@ async def download_image(user_id, PP_PATH, max_retries=3):
     return False  # 下载失败，返回 False
 
 
-# @register("furryhm", "astrbot_plugin_furry_cg", "小茶馆插件", "1.0.1")
 class TeaHousePlugin(Star):
     # 插件元数据
     namespace = "furryhm"
     plugin_name = "astrbot_plugin_furry_cg"
     description = "小茶馆插件"
     version = "1.0.1"
-    repo = "https://github.com/furryHM-mrz/astrbot_plugin_furry_cg"  # 添加仓库地址以便自动更新
+    repo = "https://github.com/furryHM-mrz/astrbot_plugin_furry_cg"
     
     def __init__(self, context: Context):
         super().__init__(context)
+
         # 使用框架API获取插件数据目录
         self.PLUGIN_DIR = os.path.dirname(__file__)  # 插件根目录
         self.DATA_DIR = os.path.join(os.getcwd(), 'data')      # 框架数据目录
@@ -1545,7 +1563,7 @@ class TeaHousePlugin(Star):
                 identity = self.getGroupUserIdentity(is_admin, user_id, owner)
                 formatted_time = get_formatted_time()
                 sign_in_count = db_user.query_sign_in_count()[0]  # 获取签到次数的第一个元素
-                one_sentence_data = get_one_sentence()
+                one_sentence_data = await get_one_sentence()
 
                 # 默认值，防止one_sentence获取失败造成错误
                 one_sentence = "今日一言获取失败"
