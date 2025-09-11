@@ -309,6 +309,7 @@ class TeaHousePlugin(Star):
         menu = "🍵 欢迎光临小茶馆！指令菜单如下：\n\n"
         menu += "📝 签到相关：\n"
         menu += "  雪泷签到 - 每日签到获取金币\n"
+        menu += "  更新头像 - 手动更新个人头像\n"
         menu += "🛍 商店相关：\n"
         menu += "  雪泷商店 - 查看茶叶商品\n"
         menu += "  雪泷购买 <商品ID> <数量> - 购买茶叶\n"
@@ -1543,6 +1544,30 @@ class TeaHousePlugin(Star):
             if self.database_plugin_activated and hasattr(self.database_plugin, 'close_databases'):
                 self.database_plugin.close_databases()
 
+    # -------------------------- 新增更新头像功能 --------------------------
+    @filter.command("更新头像")
+    async def update_avatar(self, event: AstrMessageEvent):
+        """
+        - 手动更新用户头像
+        """
+        user_id = event.get_sender_id()
+        user_name = event.get_sender_name()
+        
+        try:
+            # 头像路径
+            avatar_path = os.path.join(self.PP_PATH, f"{user_id}.png")
+            
+            # 尝试下载新头像
+            success = await download_image(user_id, self.PP_PATH)
+            
+            if success:
+                yield event.plain_result(f"{user_name} 的头像已更新成功！")
+            else:
+                yield event.plain_result(f"{user_name} 的头像更新失败，请稍后再试。")
+                
+        except Exception as e:
+            logger.exception(f"更新头像失败: {e}")
+            yield event.plain_result("更新头像失败，请稍后再试。")
 
     @filter.command("签到")
     async def sign_in(self, event: AstrMessageEvent):
@@ -1609,7 +1634,7 @@ class TeaHousePlugin(Star):
                 if os.path.exists(pp):
                     avatar_path = pp
                 else:
-                    di = download_image(user_id, self.PP_PATH)
+                    di = await download_image(user_id, self.PP_PATH)
                     if di:
                         avatar_path = pp
                     else:
@@ -1631,7 +1656,23 @@ class TeaHousePlugin(Star):
                     image_folder=image_folder,
                     font_path=self.FONT_PATH
                 )
-                yield event.image_result(sign_image)
+                
+                # 检查图片是否生成成功
+                if sign_image and os.path.exists(sign_image):
+                    yield event.image_result(sign_image)
+                else:
+                    # 如果图片生成失败，返回文字信息
+                    result_text = f"签到成功！\n"
+                    result_text += f"用户: {user_name}\n"
+                    result_text += f"身份: {identity}\n"
+                    result_text += f"时间: {formatted_time}\n"
+                    result_text += f"金币: {user_economy:.2f}\n"
+                    if not is_signed_today:
+                        result_text += f"今日获得金币: {sign_in_reward:.2f}\n"
+                    result_text += f"签到天数: {sign_in_count if is_signed_today else sign_in_count + 1}\n"
+                    result_text += f"一言: {one_sentence}\n"
+                    result_text += one_sentence_source
+                    yield event.plain_result(result_text)
 
         except Exception as e:
             logger.exception(f"签到失败: {e}")
